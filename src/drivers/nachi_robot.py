@@ -31,6 +31,7 @@ from threading import Thread, currentThread
 
 import numpy as np
 import rospy
+import time, traceback
 import tf
 import rosweld_drivers.srv
 from rosweld_drivers.msg import RobotState
@@ -326,7 +327,6 @@ def handleUpdateResponse(r):
             js.name = [
                 "joint_1",
                 "joint_2",
-                "joint_7",
                 "joint_3",
                 "joint_4",
                 "joint_5",
@@ -483,8 +483,13 @@ def move_along(req):
         response.result = "The robot is moving, can't accept new poses."
         return response
 
+    status(name, "before SendPoses", STATE.ERROR)
     sendPoses(req.moves)
-    sendPlay()
+
+    status(name, "after SendPoses", STATE.ERROR)
+    #sendPlay()
+
+    status(name, "done", STATE.ERROR)
 
     return response
 
@@ -536,6 +541,7 @@ def move_pose(req):
 
     # add an angle pointing to the path
     msg.extend(pack('<f', getPathVectorAngle(pose.position))[::-1])
+    time.sleep(5.0)
 
     rospy.loginfo(
         "Goint to pose (%d): x: %d, y: %d, z: %d, r: %d, p: %d, y: %d, J1: %d" %
@@ -551,12 +557,15 @@ def move_pose(req):
          degrees(rz),
          getPathVectorAngle(pose.position)))
 
+
     # set current move index
     msg.extend(pack('<i', idx)[::-1])
 
-    udp['command'].appendToQueue(msg, "set_pose")
 
+    udp['command'].appendToQueue(msg, "set_pose")
+    time.sleep(5.0)
     status(name, "Pose sent to queue")
+    time.sleep(5.0)
 
     return rosweld_drivers.srv.MoveAlongResponse()
 

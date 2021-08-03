@@ -144,6 +144,7 @@ class UdpConnector(object):
             _msg = '{:+05d}'.format(self.seq) + msg
 
         self.sock_queue.append(MessageQueueItem(self.seq, _msg, desc, handler))
+        print(str(self.seq)+" +desc: "+desc )
         return self.seq
 
     def receive(self, size=1024):
@@ -227,7 +228,7 @@ class UdpConnector(object):
 
                     # call the handler function pointer
                     item.answered = datetime.now().microsecond
-                    
+
                     if item.desc != "send_update":
                         status(self.name, "Handled: %s, time: %dms, tries: %d" % (item.desc, abs(
                             item.answered - item.requested) / 1000, len(item.tryStamps)), STATE.INFO)
