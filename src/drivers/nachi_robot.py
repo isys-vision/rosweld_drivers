@@ -34,9 +34,11 @@ import rospy
 import time, traceback
 import tf
 import rosweld_drivers.srv
+import industrial_msgs.srv
 from rosweld_drivers.msg import RobotState
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, EmptyResponse
+#from industrial_msgs.srv import IORead, IOWrite
 
 from src.drivers.misc.status import STATE, status
 from src.drivers.misc.udp import UdpConnector
@@ -71,6 +73,9 @@ p_robot_state = None
 do_update = True
 
 
+loopRate = 10   # [hz] Warning: may have significant impact on CPU load
+
+
 class Commands(object):
     """Robot commands enum
 
@@ -83,6 +88,10 @@ class Commands(object):
     setSpeed = 4
     abort = 5
     setPose = 6
+    setIO = 7
+    readIO = 8
+    writeIO = 9
+    setJoints = 10
 
 
 class RobotStates(object):
@@ -148,7 +157,7 @@ def sendPoses(poseList):
     Arguments:
         poseList {Move[]} -- move list
     """
-
+    
     global udp
     global allPositions
     global batchSize
@@ -179,6 +188,7 @@ def sendPoses(poseList):
         for i in range(sentPoses, sentPoses + _tbs):
             p = poseList[i].pose
             pos = p.position
+            print i
 
             msg.extend(pack('<f', round(pos.x * 1000, 3))[::-1])
             msg.extend(pack('<f', round(pos.y * 1000, 3))[::-1])
@@ -211,7 +221,7 @@ def sendPlay(start=1, end=-1, d=1):
     Keyword Arguments:
         poses {Move[]} -- set of poses, if None, use allPositions (default: {None})
     """
-
+    print "start"
     global udp
 
     msg = bytearray()
@@ -271,6 +281,8 @@ def handleUpdateResponse(r):
     global do_update
     global p_joint_states
     global p_robot_state
+    global IO_number
+    global IO_value
 
     try:
 
@@ -280,6 +292,7 @@ def handleUpdateResponse(r):
 
         state.speed = unpack('>f', r[i:i + 4])[0]
         i = i + 4
+        #print i
         state.pose.position.x = unpack('>f', r[i:i + 4])[0] / 1000
         i = i + 4
         state.pose.position.y = unpack('>f', r[i:i + 4])[0] / 1000
@@ -315,9 +328,9 @@ def handleUpdateResponse(r):
             i = i + 4
             state.joints.append(unpack('>f', r[i:i + 4])[0])
 
-        #print "Update received"
+        print "Update received"
         #print seq_back, fingerY, currentMove, speed, RobotStates.toString(robotProgramState)
-
+        #print state.speed, state.pose.position.x, state.pose.position.y, state.pose.position.z, state.speed 
         update_response = True
         state.isMoving = last_state is not None and last_state.pose != state.pose
 
@@ -343,8 +356,29 @@ def handleUpdateResponse(r):
                 0.0
             ]
             p_joint_states.publish(js)
-
+            
             do_update = False
+            i = 80 # Wert aus Usertask 001
+            #IOs = []
+            IOs_name = []
+            IOs_value = []
+            
+            IO = {}
+            
+            for idx in range(80, i+3):
+                #IOs_name.append(str(idx-79)) 
+                #IOs_value.append(unpack('>s', r[idx:idx + 1])[0]) 
+                
+                #IOs_value = unpack('>s', r[idx:idx + 1])[0]
+                IO["Output "+str(idx-79)] = unpack('>s', r[idx:idx + 1])[0]
+                
+                #print i
+                
+            
+            #print IOs_name
+            #print IOs_value
+            #print IO
+
 
         last_state = state
         stored_pose_count = state.storedPoses
@@ -392,8 +426,115 @@ def sendSetSpeed(value):
 
     udp['command'].appendToQueue(msg, "send_set_speed")
     status(name, "SetSpeed sent: %d." % (value))
+    
+def sendRobotInputOutput(typeIO, number, value):
+    """Sends a set speed command to the robot
+
+       Sets the global movement speed of the robot
+
+    Arguments:
+        value {int32} -- speed
+    """
+
+    global udp
+
+    msg = bytearray()
+
+    # add command
+    msg.extend(pack('<i', Commands.setIO)[::-1])
+    # add type
+    msg.extend(pack('<i', typeIO)[::-1])
+    msg.extend(pack('<i', number)[::-1])
+    msg.extend(pack('<i', value)[::-1])
+
+    udp['command'].appendToQueue(msg, "send_IO")
+    status(name, "SetIO sent: %d, %d, %d" % (typeIO, number, value))
+
+def io_read(req):
+    """Sends a set speed command to the robot
+
+       Sets the global movement speed of the robot
+
+    Arguments:
+        value {int32} -- speed
+    """
+
+    global udp
+
+    msg = bytearray()
+
+    # add command
+    msg.extend(pack('<i', Commands.readIO)[::-1])
+    # add type
+    print(type(req.items[0]))
+    print(req.items[0].index)
+    print(req.items[0].type)
+    
+    
+    #    #replyItem;
+    io_index = req.items[0].index;
+    io_type = req.items[0].type;
+    #    replyItem.type = item.type;
+    #    replyItem.result = true;
+    #    replyItem.value = 0;
+    #print(type(io_index))
+    #print(io_type)
 
 
+    msg.extend(pack('<i', io_index))
+    msg.extend(pack('<i', io_type))
+    #msg.extend(pack('<i', req.value)[::-1])
+
+    udp['command'].appendToQueue(msg, "io_read")
+    status(name, "Read IO sent: %d, %d" % (io_index, io_type))
+    
+    state = rosweld_drivers.msg.RobotState()
+    #IO = {}
+    i=80        
+    #r = {}
+    r = bytearray()
+    #for idx in range(80, i+3):
+    #IOs_name.append(str(idx-79)) 
+    #IOs_value.append(unpack('>s', r[idx:idx + 1])[0]) 
+    print r
+    IO = unpack('>s', r[80:80 + 1])[0]
+    #stateId = unpack('>i', r[i:i + 4])[0]
+        
+    print IO
+    
+    sendUpdate()
+    io_value = True #TODO
+    
+    
+    myItem = industrial_msgs.msg.IOReadReplyItem(type=io_type, index=io_index, result=True, value=io_value)
+    response = industrial_msgs.srv.IOReadResponse()
+    response.items.append(myItem)
+    
+    return response
+
+def io_write(req):
+    """Sends a set speed command to the robot
+
+       Sets the global movement speed of the robot
+
+    Arguments:
+        value {int32} -- speed
+    """
+
+    global udp
+
+    msg = bytearray()
+
+    # add command
+    msg.extend(pack('<i', Commands.setIO)[::-1])
+    # add type
+    msg.extend(pack('<i', req.type)[::-1])
+    msg.extend(pack('<i', req.index)[::-1])
+    #msg.extend(pack('<i', req.value)[::-1])
+
+    udp['command'].appendToQueue(msg, "send_IO")
+    status(name, "SetIO sent: %d, %d, %d" % (req.type, req.index))
+    
 def move_between(req):
     """Handler for move between service request
 
@@ -487,7 +628,7 @@ def move_along(req):
     sendPoses(req.moves)
 
     status(name, "after SendPoses", STATE.ERROR)
-    #sendPlay()
+    sendPlay()
 
     status(name, "done", STATE.ERROR)
 
@@ -503,7 +644,7 @@ def move_pose(req):
     Returns:
         MoveAlongResponse -- Empty
     """
-
+    
     if len(req.moves) == 0:
         return rosweld_drivers.srv.MoveAlongResponse()
 
@@ -538,10 +679,9 @@ def move_pose(req):
     msg.extend(pack('<f', degrees(rx))[::-1])
     msg.extend(pack('<f', degrees(ry))[::-1])
     msg.extend(pack('<f', degrees(rz))[::-1])
-
+    
     # add an angle pointing to the path
     msg.extend(pack('<f', getPathVectorAngle(pose.position))[::-1])
-    time.sleep(5.0)
 
     rospy.loginfo(
         "Goint to pose (%d): x: %d, y: %d, z: %d, r: %d, p: %d, y: %d, J1: %d" %
@@ -560,15 +700,72 @@ def move_pose(req):
 
     # set current move index
     msg.extend(pack('<i', idx)[::-1])
-
+    
 
     udp['command'].appendToQueue(msg, "set_pose")
-    time.sleep(5.0)
     status(name, "Pose sent to queue")
-    time.sleep(5.0)
 
     return rosweld_drivers.srv.MoveAlongResponse()
 
+def move_joints(req):
+    """Moves to a set of poses without storing them
+
+    Arguments:
+        req {MoveAlongRequest} -- set of poses
+
+    Returns:
+        MoveAlongResponse -- Empty
+    """
+    
+    if len(req.moves) == 0:
+        return rosweld_drivers.srv.MoveAlongJointsResponse()
+
+    joints = []
+    
+    joints = req.moves[0].joints
+    
+    print joints
+    print joints[0]
+    
+    idx = -1
+    if len(allPositions) > 0:
+        for i, p in enumerate(allPositions):
+            if p == pose:
+                idx = i + 1
+
+    global udp
+    #print "Sending poses"
+
+    msg = bytearray()
+    # add command - store
+    msg.extend(pack('<i', Commands.setJoints)[::-1])
+    #not used
+    msg.extend(pack('<i', 1)[::-1])
+    # add pose
+    # add position J1,..., J6
+    msg.extend(pack('<f', degrees(joints[0]))[::-1])
+    msg.extend(pack('<f', degrees(joints[1]))[::-1])
+    msg.extend(pack('<f', degrees(joints[2]))[::-1])
+    msg.extend(pack('<f', degrees(joints[3]))[::-1])
+    msg.extend(pack('<f', degrees(joints[4]))[::-1])
+    msg.extend(pack('<f', degrees(joints[5]))[::-1])
+
+
+    rospy.loginfo(
+        "Goint to pose (%d): J1: %f, J2: %f, J3: %f, J4: %f, J5: %f, J6: %f" %
+        (idx, joints[0], joints[1], joints[2], joints[3], joints[4], joints[5]))
+    rospy.loginfo(
+        "Goint to pose (%d): J1: %f°, J2: %f°, J3: %f°, J4: %f°, J5: %f°, J6: %f°" %
+        (idx, degrees(joints[0]), degrees(joints[1]), degrees(joints[2]), degrees(joints[3]), degrees(joints[4]), degrees(joints[5])))
+
+    # set current move index
+    msg.extend(pack('<i', idx)[::-1])
+    
+
+    udp['command'].appendToQueue(msg, "set_joints")
+    status(name, "Joints sent to queue")
+
+    return rosweld_drivers.srv.MoveAlongJointsResponse()
 
 def abort(req):
     """Aborts the current movement
@@ -601,6 +798,22 @@ def set_speed(req):
     sendSetSpeed(req.value)
     return rosweld_drivers.srv.SetSpeedResponse()
 
+def set_IO(req):
+    """Handler for the set speed service request
+
+       Sets the global moveit speed
+
+    Arguments:
+        req {SetSpeedRequest} -- request object, containing the value
+
+    Returns:
+        SetSpeedResponse -- response objet, empty
+    """
+
+    sendRobotInputOutput(req.typeIO, req.number, req.value)
+    return EmptyResponse()
+
+
 
 def robot_state_publisher():
     """Publishes the robot pose
@@ -613,7 +826,7 @@ def robot_state_publisher():
     global last_state
     global name
     last_state = None
-    rate = rospy.Rate(5)  # 5Hz
+    rate = rospy.Rate(5)  
     t = currentThread()
     timeout = 10
     while not rospy.is_shutdown() and getattr(t, "do_run", True):
@@ -676,22 +889,24 @@ def init():
 
         udp['command'] = UdpConnector(host, port["command"], name=name)
         udp['update'] = UdpConnector(host, port["update"], name=name)
+       
 
         # Registering services
-        rospy.Service(
-            'store_poses',
-            rosweld_drivers.srv.MoveAlong,
-            store_poses)
+        rospy.Service('store_poses', rosweld_drivers.srv.MoveAlong, store_poses)
         rospy.Service('move_along', rosweld_drivers.srv.MoveAlong, move_along)
         rospy.Service('abort', Empty, abort)
         rospy.Service('update', Empty, update)
         rospy.Service('set_speed', rosweld_drivers.srv.SetSpeed, set_speed)
+        rospy.Service('set_IO', rosweld_drivers.srv.SetIO, set_IO)
+        rospy.Service('io_read', industrial_msgs.srv.IORead, io_read)
+        rospy.Service('io_write', industrial_msgs.srv.IOWrite, io_write)
         rospy.Service(
             'move_between',
             rosweld_drivers.srv.MoveBetween,
             move_between)
         rospy.Service('move_pose', rosweld_drivers.srv.MoveAlong, move_pose)
-
+        rospy.Service('move_joints', rosweld_drivers.srv.MoveAlongJoints, move_joints)
+        
         # Registering publishers
         global p_robot_state
         global p_joint_states
@@ -705,7 +920,7 @@ def init():
             latch=True)
 
         status(name, "NACHI Robot Driver - ready (%s)" % (name))
-
+        
         # Starts the robot pose publisher on a new thread
         update_thread = Thread(target=robot_state_publisher)
         update_thread.do_run = True

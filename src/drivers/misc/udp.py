@@ -144,7 +144,7 @@ class UdpConnector(object):
             _msg = '{:+05d}'.format(self.seq) + msg
 
         self.sock_queue.append(MessageQueueItem(self.seq, _msg, desc, handler))
-        print(str(self.seq)+" +desc: "+desc )
+        #print(str(self.seq)+" +desc: "+desc )
         return self.seq
 
     def receive(self, size=1024):
