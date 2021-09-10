@@ -5,6 +5,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs
   industrial_msgs
+  trajectory_msgs
   message_generation
 )
 
@@ -37,8 +38,9 @@ generate_messages(
   std_msgs
   geometry_msgs
   industrial_msgs
+  trajectory_msgs
 )
 
 catkin_package(
-  CATKIN_DEPENDS message_runtime std_msgs geometry_msgs industrial_msgs
+  CATKIN_DEPENDS message_runtime std_msgs geometry_msgs industrial_msgs trajectory_msgs
 )

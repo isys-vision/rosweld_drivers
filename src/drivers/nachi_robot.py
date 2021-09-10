@@ -35,6 +35,8 @@ import time, traceback
 import tf
 import rosweld_drivers.srv
 import industrial_msgs.srv
+
+from trajectory_msgs.msg import *
 from rosweld_drivers.msg import RobotState
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, EmptyResponse
@@ -92,6 +94,7 @@ class Commands(object):
     readIO = 8
     writeIO = 9
     setJoints = 10
+    storeJoints = 11
 
 
 class RobotStates(object):
@@ -209,6 +212,80 @@ def sendPoses(poseList):
 
     status(name, "%d poses sent to queue" % (len(allPositions)))
 
+def sendJointPoses(jointPoses):
+    """Sends a list of poses to the robot
+
+       Sends the poses in batches, to speed up the transfer
+
+    Arguments:
+        poseList {Move[]} -- move list
+    """
+    
+    global udp
+    global allPositions
+    global batchSize
+    sentJointPoses = 0
+    
+    numJoints = 6
+    print jointPoseList
+
+    numJointPoses = len(jointPoses)/numJoints
+    print "Anzahl an Punkten: "+str(numJointPoses)
+    allPositions = jointPoses
+    
+
+    while numJointPoses  != sentJointPoses:
+        msg = bytearray()
+        _tbs = 0
+
+        if batchSize > numJointPoses  - sentJointPoses:
+            _tbs = numJointPoses  - sentJointPoses
+        else:
+            _tbs = batchSize
+
+
+        # add command - store
+        msg.extend(pack('<i', Commands.storeJoints)[::-1])
+        #not used
+        msg.extend(pack('<i', 1)[::-1])
+        # add this batch size
+        msg.extend(pack('<i', _tbs)[::-1])
+        # add start pose idx
+        msg.extend(pack('<i', sentJointPoses + 1)[::-1])
+        # add pose bytes
+        for i in range(sentJointPoses, sentJointPoses + _tbs):
+            p = jointPoseList.trajectory.points[i]
+            pos = p.positions
+            print i
+
+            # add position J1,..., J6
+            msg.extend(pack('<f', degrees(pos[0]))[::-1])
+            msg.extend(pack('<f', degrees(pos[1]))[::-1])
+            msg.extend(pack('<f', degrees(pos[2]))[::-1])
+            msg.extend(pack('<f', degrees(pos[3]))[::-1])
+            msg.extend(pack('<f', degrees(pos[4]))[::-1])
+            msg.extend(pack('<f', degrees(pos[5]))[::-1])
+
+
+
+
+        jointNames = [] 
+        jointNames = [
+            "joint_1",
+            "joint_2",
+            "joint_3",
+            "joint_4",
+            "joint_5",
+            "joint_6"]
+
+
+        udp['command'].appendToQueue(msg, "send_joint_poses")
+        sentJointPoses += _tbs
+
+
+
+
+    status(name, "%d poses sent to queue" % (len(allPositions)))
 
 def sendPlay(start=1, end=-1, d=1):
     """Moves the robot between two given poses
@@ -289,6 +366,7 @@ def handleUpdateResponse(r):
         i = 8
 
         state = rosweld_drivers.msg.RobotState()
+        #state = industrial_msgs.msg.RobotStatus()
 
         state.speed = unpack('>f', r[i:i + 4])[0]
         i = i + 4
@@ -343,17 +421,15 @@ def handleUpdateResponse(r):
                 "joint_3",
                 "joint_4",
                 "joint_5",
-                "joint_6",
-                "joint_tip"]
+                "joint_6"]
+            # ist das mit den Vorzeichen sinnvoll timo?
             js.position = [
                 state.joints[0],
                 -1 * (state.joints[1] - pi / 2),
-                state.joints[6],
                 -1 * state.joints[2],
                 state.joints[3],
                 -1 * state.joints[4],
-                state.joints[5],
-                0.0
+                state.joints[5]
             ]
             p_joint_states.publish(js)
             
@@ -511,6 +587,56 @@ def io_read(req):
     response.items.append(myItem)
     
     return response
+
+def jointTrajectorySub( trajectory ):
+    #trajectory = trajectory_msgs.JointTrajectory
+    #response = industrial_msgs.srv.IOReadResponse()
+    numJoints = 6
+    maxNumPoints = 10000
+    
+    #AdsVariable<std::array<float, numJoints * maxNumPoints> > positionArray {*m_route.get(), m_trajectoryArrayName};
+    
+    positions= [];
+
+    #Layout ist: erst maxNumPoints mal J1, dann maxNumPoints mal J2, ...
+
+    # Todo: implement 2ms interpolation?
+    p = 0
+    for point in trajectory.points:
+        for i in range(0, numJoints):
+            #transfer in degrees
+            positions.append( point.positions[i] * 180.0/pi)
+        
+        p += p
+    
+
+#    # fill up remaining points with all zero
+#    for p0 in range(p, maxNumPoints-1):
+#        for i in range(0, numJoints-1):
+#            # transfer in degrees
+#            positions.append(0)
+        
+    
+    print positions
+    sendJointPoses (positions)
+    
+
+    ROS_ERROR_STREAM("NACHI_Trajectory: Trajectory sent");
+    
+    return True
+
+def jointTrajectoryCB(req, res):
+
+    traj = req.trajectory  # copy message data
+    jointTrajectorySub(traj)
+
+    # no success/fail result from jointTrajectoryCB.  Assume success.
+    res.code.val = industrial_msgs.ServiceReturnCode.SUCCESS
+
+    return True  # always return true.  To distinguish between call-failed and service-unavailable.
+
+
+
 
 def io_write(req):
     """Sends a set speed command to the robot
@@ -722,6 +848,10 @@ def move_joints(req):
 
     joints = []
     
+    numJoints = len(req.moves[0])
+    if numJoints>1:
+        print "More than one Position ?"
+        
     joints = req.moves[0].joints
     
     print joints
@@ -893,6 +1023,7 @@ def init():
 
         # Registering services
         rospy.Service('store_poses', rosweld_drivers.srv.MoveAlong, store_poses)
+        #rospy.Service('store_joint_poses', industrial_msgs.srv.CmdJointTrajectory, sendJointPoses)
         rospy.Service('move_along', rosweld_drivers.srv.MoveAlong, move_along)
         rospy.Service('abort', Empty, abort)
         rospy.Service('update', Empty, update)
@@ -900,6 +1031,8 @@ def init():
         rospy.Service('set_IO', rosweld_drivers.srv.SetIO, set_IO)
         rospy.Service('io_read', industrial_msgs.srv.IORead, io_read)
         rospy.Service('io_write', industrial_msgs.srv.IOWrite, io_write)
+        rospy.Service('joint_path_command', industrial_msgs.srv.CmdJointTrajectory, jointTrajectoryCB)
+        
         rospy.Service(
             'move_between',
             rosweld_drivers.srv.MoveBetween,
@@ -911,13 +1044,16 @@ def init():
         global p_robot_state
         global p_joint_states
 
-        p_robot_state = rospy.Publisher(
-            'robot_state', RobotState, queue_size=10, latch=True)
+        p_robot_state = rospy.Publisher('robot_controller_state', RobotState, queue_size=10, latch=True)
         p_joint_states = rospy.Publisher(
-            'robot_controller_joint_state',
+            'joint_states',
             JointState,
             queue_size=10,
             latch=True)
+        p_robot_status = rospy.Publisher('robot_status', industrial_msgs.msg.RobotStatus, queue_size=10, latch=True)
+        
+        # Registering subscribers
+        rospy.Subscriber('joint_path_command', JointTrajectory, jointTrajectorySub) 
 
         status(name, "NACHI Robot Driver - ready (%s)" % (name))
         
